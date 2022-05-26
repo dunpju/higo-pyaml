@@ -34,7 +34,6 @@ func Unmarshal(filename string, out interface{}) (err error) {
 	yamlMap := make(map[interface{}]interface{})
 	yamlFileErr := yaml.Unmarshal(yamlFile, yamlMap)
 	fmt.Println(yamlFileErr, yamlMap)
-	fmt.Println(yamlMap["yyy"].(map[interface{}]interface{})["student1"])
 	gs := &groups{}
 	var (
 		currentGroup              *group
@@ -63,7 +62,7 @@ func Unmarshal(filename string, out interface{}) (err error) {
 			if b == 58 { // 58 -> :
 				if currentRaw.key == "" {
 					currentRaw.prefixBlankNum = len(prefixBlankNum)
-					if fileValidFirstRawBlankNum > currentRaw.prefixBlankNum {// 当前行前缀空格数量,比文件有效第一行空格数量小
+					if fileValidFirstRawBlankNum > currentRaw.prefixBlankNum { // 当前行前缀空格数量,比文件有效第一行空格数量小
 						return false // 结束文件读取
 					}
 					currentRaw.key = strings.TrimSuffix(strings.TrimPrefix(string(string(rawKey)), " "), " ")
@@ -98,7 +97,7 @@ func Unmarshal(filename string, out interface{}) (err error) {
 				currentGroup = &group{line: line, raws: make([]*raw, 0)}
 				gs.group = append(gs.group, currentGroup)
 			}
-			if currentRaw.prefixBlankNum == 0 && currentGroup.line != line { // 开新组
+			if currentRaw.prefixBlankNum == fileValidFirstRawBlankNum && currentGroup.line != line { // 开新组
 				if currentRaw.key != "" {
 					currentGroup = nil
 					goto newGroup
@@ -110,18 +109,47 @@ func Unmarshal(filename string, out interface{}) (err error) {
 		}
 		return true
 	})
-	fmt.Println(gs, fileValidFirstRawBlankNum)
-	rs := make([]raw, 0)
+	fmt.Println(gs)
+	rs := make([]*raw, 0)
+	var currentChildMapGroup interface{}
+	var currentMapValue interface{}
 	for _, g := range gs.group {
-		for _, r := range g.raws {
-			if r.prefixBlankNum == 0 || len(rs) == 0 {
-				rs = append(rs, *r)
+		for i, r := range g.raws {
+			if r.prefixBlankNum == fileValidFirstRawBlankNum || len(rs) == 0 {
+				currentMapValue = yamlMap[r.key]
+				fmt.Println(currentMapValue)
+				if r.value != nil && r.value != "" {
+					r.value = currentMapValue
+				} else {
+					currentChildMapGroup = yamlMap[r.key]
+				}
+				rs = append(rs, r)
 			} else if len(rs) > 0 {
-
+				if r.prefixBlankNum > g.raws[i-1].prefixBlankNum {
+					r.parent = g.raws[i-1]
+					if r.value != nil && r.value != "" {
+						fmt.Printf("%T\n", r.value)
+						fmt.Println(*r, r.value)
+						r.value = currentChildMapGroup.(map[interface{}]interface{})[r.key]
+					}
+					g.raws[i-1].child = append(g.raws[i-1].child, r)
+				} else {
+					j := i
+				forBegin:
+					if r.prefixBlankNum == g.raws[j-1].prefixBlankNum {
+						r.parent = g.raws[j-1].parent
+						g.raws[j-1].parent.child = append(g.raws[j-1].parent.child, r)
+					} else if r.prefixBlankNum < g.raws[j-1].prefixBlankNum {
+						j--
+						goto forBegin
+					}
+				}
 			}
-			fmt.Println(r)
 		}
 	}
 	fmt.Println(rs)
+	fmt.Println(currentChildMapGroup)
+	fmt.Println(*rs[0].child[0].child[0].child[0])
+	fmt.Printf("%p\n", rs[0].child[0].child[0].child[0].parent)
 	return nil
 }
