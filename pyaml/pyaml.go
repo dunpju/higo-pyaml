@@ -1,7 +1,6 @@
 package pyaml
 
 import (
-	"fmt"
 	"github.com/dengpju/higo-utils/utils"
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
@@ -12,28 +11,102 @@ type groups struct {
 	group []*group
 }
 
+type Pyaml struct {
+	ymap map[interface{}]interface{}
+	keys map[string]int
+	raws []*Raw
+}
+
+func NewPyaml() *Pyaml {
+	return &Pyaml{ymap: make(map[interface{}]interface{}), keys: make(map[string]int), raws: make([]*Raw, 0)}
+}
+
+func (this *Pyaml) Each(fn func(raw *Raw) bool) {
+	each(this.raws, fn)
+}
+
+func (this *Pyaml) Get(key string) *Raw {
+	if strings.Contains(key, ".") {
+		keys := strings.Split(key, ".")
+		var raw *Raw
+		for i, k := range keys {
+			if i == 0 {
+				if index, ok := this.keys[k]; ok {
+					raw = this.raws[index]
+				}
+			} else {
+				raw = raw.Get(k)
+			}
+		}
+		return raw
+	} else {
+		if index, ok := this.keys[key]; ok {
+			return this.raws[index]
+		}
+	}
+	return nil
+}
+
+func (this *Pyaml) Map() map[interface{}]interface{} {
+	return this.ymap
+}
+
+type Raws []*Raw
+
+func each(rs Raws, fn func(raw *Raw) bool) {
+	for _, r := range rs {
+		if fn != nil {
+			if !fn(r) {
+				break
+			}
+		}
+		if len(r.child) > 0 {
+			each(r.child, fn)
+		}
+	}
+}
+
 type group struct {
 	line int
-	raws []*raw
+	raws []*Raw
 }
 
-type raw struct {
-	parent         *raw
+type Raw struct {
+	parent         *Raw
 	prefixBlankNum int
 	line           int
+	path           string
 	key            string
 	value          interface{}
-	child          []*raw
+	keys           map[string]int
+	child          []*Raw
 }
 
-func Unmarshal(filename string, out interface{}) (err error) {
+func NewRaw() *Raw {
+	return &Raw{keys: make(map[string]int), child: make([]*Raw, 0)}
+}
+
+func (this *Raw) Get(key string) *Raw {
+	if index, ok := this.keys[key]; ok {
+		return this.child[index]
+	}
+	return nil
+}
+
+func (this *Raw) Value() interface{} {
+	return this.value
+}
+
+func Unmarshal(filename string) (pya *Pyaml, err error) {
 	yamlFile, err := ioutil.ReadFile(filename)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	yamlMap := make(map[interface{}]interface{})
 	yamlFileErr := yaml.Unmarshal(yamlFile, yamlMap)
-	fmt.Println(yamlFileErr, yamlMap)
+	if yamlFileErr != nil {
+		return nil, yamlFileErr
+	}
 	gs := &groups{}
 	var (
 		currentGroup              *group
@@ -45,9 +118,9 @@ func Unmarshal(filename string, out interface{}) (err error) {
 			unblankNum     []int32
 			rawKey         []int32
 			rawValue       []int32
-			currentRaw     *raw
+			currentRaw     *Raw
 		)
-		currentRaw = &raw{}
+		currentRaw = NewRaw()
 		rowset := make(map[int32]int32)
 		for i, b := range []rune(string(r)) {
 			if b == 35 { // 行开头注释标记
@@ -94,7 +167,7 @@ func Unmarshal(filename string, out interface{}) (err error) {
 			}
 		newGroup:
 			if currentGroup == nil {
-				currentGroup = &group{line: line, raws: make([]*raw, 0)}
+				currentGroup = &group{line: line, raws: make([]*Raw, 0)}
 				gs.group = append(gs.group, currentGroup)
 			}
 			if currentRaw.prefixBlankNum == fileValidFirstRawBlankNum && currentGroup.line != line { // 开新组
@@ -109,36 +182,28 @@ func Unmarshal(filename string, out interface{}) (err error) {
 		}
 		return true
 	})
-	fmt.Println(gs)
-	rs := make([]*raw, 0)
-	var currentChildMapGroup interface{}
-	var currentMapValue interface{}
+	rs := make([]*Raw, 0)
+	pya = NewPyaml()
 	for _, g := range gs.group {
 		for i, r := range g.raws {
 			if r.prefixBlankNum == fileValidFirstRawBlankNum || len(rs) == 0 {
-				currentMapValue = yamlMap[r.key]
-				fmt.Println(currentMapValue)
-				if r.value != nil && r.value != "" {
-					r.value = currentMapValue
-				} else {
-					currentChildMapGroup = yamlMap[r.key]
-				}
+				pya.keys[r.key] = len(rs)
+				r.path = r.key
 				rs = append(rs, r)
 			} else if len(rs) > 0 {
 				if r.prefixBlankNum > g.raws[i-1].prefixBlankNum {
 					r.parent = g.raws[i-1]
-					if r.value != nil && r.value != "" {
-						fmt.Printf("%T\n", r.value)
-						fmt.Println(*r, r.value)
-						r.value = currentChildMapGroup.(map[interface{}]interface{})[r.key]
-					}
+					r.path = r.parent.path + "`" + r.key
 					g.raws[i-1].child = append(g.raws[i-1].child, r)
+					g.raws[i-1].keys[r.key] = len(g.raws[i-1].child) - 1
 				} else {
 					j := i
 				forBegin:
 					if r.prefixBlankNum == g.raws[j-1].prefixBlankNum {
 						r.parent = g.raws[j-1].parent
+						r.path = r.parent.path + "`" + r.key
 						g.raws[j-1].parent.child = append(g.raws[j-1].parent.child, r)
+						g.raws[j-1].parent.keys[r.key] = len(g.raws[j-1].parent.child) - 1
 					} else if r.prefixBlankNum < g.raws[j-1].prefixBlankNum {
 						j--
 						goto forBegin
@@ -147,9 +212,7 @@ func Unmarshal(filename string, out interface{}) (err error) {
 			}
 		}
 	}
-	fmt.Println(rs)
-	fmt.Println(currentChildMapGroup)
-	fmt.Println(*rs[0].child[0].child[0].child[0])
-	fmt.Printf("%p\n", rs[0].child[0].child[0].child[0].parent)
-	return nil
+	pya.ymap = yamlMap
+	pya.raws = rs
+	return pya, nil
 }
