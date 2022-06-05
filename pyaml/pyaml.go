@@ -1,6 +1,7 @@
 package pyaml
 
 import (
+	"fmt"
 	"github.com/dengpju/higo-utils/utils"
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
@@ -33,6 +34,10 @@ func (this *Pyaml) Get(key string) *Raw {
 			if i == 0 {
 				if index, ok := this.keys[k]; ok {
 					raw = this.raws[index]
+					if _, ok := this.ymap[k].(map[interface{}]interface{}); ok {
+						raw.ymap = this.ymap[k].(map[interface{}]interface{})
+					}
+					raw.value = this.ymap[k]
 				}
 			} else {
 				raw = raw.Get(k)
@@ -41,6 +46,10 @@ func (this *Pyaml) Get(key string) *Raw {
 		return raw
 	} else {
 		if index, ok := this.keys[key]; ok {
+			if _, ok := this.ymap[key].(map[interface{}]interface{}); ok {
+				this.raws[index].ymap = this.ymap[key].(map[interface{}]interface{})
+			}
+			this.raws[index].value = this.ymap[key]
 			return this.raws[index]
 		}
 	}
@@ -72,6 +81,7 @@ type group struct {
 }
 
 type Raw struct {
+	ymap           map[interface{}]interface{}
 	parent         *Raw
 	prefixBlankNum int
 	line           int
@@ -88,6 +98,10 @@ func NewRaw() *Raw {
 
 func (this *Raw) Get(key string) *Raw {
 	if index, ok := this.keys[key]; ok {
+		if _, ok := this.ymap[key].(map[interface{}]interface{}); ok {
+			this.child[index].ymap = this.ymap[key].(map[interface{}]interface{})
+		}
+		this.child[index].value = this.ymap[key]
 		return this.child[index]
 	}
 	return nil
@@ -107,6 +121,7 @@ func Unmarshal(filename string) (pya *Pyaml, err error) {
 	if yamlFileErr != nil {
 		return nil, yamlFileErr
 	}
+	fmt.Println(yamlMap)
 	gs := &groups{}
 	var (
 		currentGroup              *group
